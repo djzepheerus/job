@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-<title>Лесная биржа</title>
+<title>Лесная биржа | Синхронизация</title>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 <style>
 * {
     box-sizing: border-box;
@@ -26,7 +29,6 @@ body {
     box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
 
-/* Адаптивность */
 @media (max-width: 560px) {
     body {
         padding: 8px;
@@ -66,11 +68,7 @@ body {
         min-width: 90px;
         font-size: 0.85rem;
     }
-    .resp-item {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    button, .btn-like {
+    button {
         width: 100%;
         padding: 12px;
         font-size: 16px;
@@ -79,9 +77,6 @@ body {
         flex-direction: column;
         gap: 12px;
         align-items: stretch;
-    }
-    .top button {
-        width: 100%;
     }
     input, textarea {
         font-size: 16px !important;
@@ -106,7 +101,7 @@ th {
     border-radius: 12px 12px 0 0;
 }
 
-button, .create-btn, #loginBtn, #logout {
+button {
     background: #2d6a4f;
     color: white;
     border: none;
@@ -125,10 +120,6 @@ button:active {
 
 button.danger {
     background: #b91c1c;
-}
-
-button.danger:active {
-    background: #7f1a1a;
 }
 
 input, textarea {
@@ -170,13 +161,6 @@ input, textarea {
     font-size: 14px;
 }
 
-.resp-block button {
-    padding: 4px 12px;
-    font-size: 12px;
-    margin-top: 6px;
-    width: auto;
-}
-
 .empty-message {
     color: #6c757d;
     text-align: center;
@@ -184,72 +168,104 @@ input, textarea {
     font-style: italic;
 }
 
-hr {
-    margin: 20px 0;
-}
-
-/* статус заказа */
-.badge {
-    display: inline-block;
-    font-size: 11px;
-    background: #e9ecef;
-    border-radius: 40px;
-    padding: 2px 8px;
-    margin-left: 8px;
+.sync-status {
+    font-size: 12px;
+    color: #2d6a4f;
+    text-align: center;
+    padding: 8px;
+    background: #e8f5e9;
+    border-radius: 20px;
+    margin-bottom: 12px;
 }
 </style>
 </head>
 <body>
 <div class="box">
+    <div id="syncStatus" class="sync-status">🔄 Подключение к облаку...</div>
     <div id="app"></div>
 </div>
 
 <script>
-    // ---------- ХРАНИЛИЩЕ ----------
-    let orders = JSON.parse(localStorage.getItem("orders")) || [];
-    let responses = JSON.parse(localStorage.getItem("responses")) || [];
+    // 🔥 ЗАМЕНИТЕ ЭТИ ДАННЫЕ НА ВАШИ ИЗ FIREBASE 🔥
+    const firebaseConfig = {
+  apiKey: "AIzaSyAj31iKIuQK2q-grcT9rUhFG7nS2Cwq7Bw",
+  authDomain: "job-e130b.firebaseapp.com",
+  projectId: "job-e130b",
+  storageBucket: "job-e130b.firebasestorage.app",
+  messagingSenderId: "305895075912",
+  appId: "1:305895075912:web:e3454cbd53416bedfa287d"
+    };
 
-    // демо-заказ, если пусто
-    if (!orders.length) {
-        orders = [
-            { id: crypto.randomUUID(), title: "Плотина", description: "Сделать плотину из брёвен", price: 100, status: "open" }
-        ];
-        save();
-    }
+    // Инициализация Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+    const dbRef = database.ref('/lesnayaBirzha');
 
-    function save() {
-        localStorage.setItem("orders", JSON.stringify(orders));
-        localStorage.setItem("responses", JSON.stringify(responses));
-        // Оповещаем все вкладки/устройства (в рамках одного домена)
-        const channel = new BroadcastChannel('lesnaya_birzha');
-        channel.postMessage({ type: 'UPDATE', timestamp: Date.now() });
-        channel.close();
-    }
+    // ---------- ГЛОБАЛЬНЫЕ ДАННЫЕ ----------
+    let orders = [];
+    let responses = [];
+    let currentUser = null;
+    let isSyncing = false;
 
-    // ---------- СИНХРОНИЗАЦИЯ МЕЖДУ ВКЛАДКАМИ / УСТРОЙСТВАМИ ----------
-    function startSync() {
-        const channel = new BroadcastChannel('lesnaya_birzha');
-        channel.onmessage = (event) => {
-            if (event.data && event.data.type === 'UPDATE') {
-                // Перезагружаем данные из localStorage
-                orders = JSON.parse(localStorage.getItem("orders")) || [];
-                responses = JSON.parse(localStorage.getItem("responses")) || [];
-                // Перерисовываем интерфейс, если пользователь залогинен
-                if (currentUser) {
-                    render();
-                }
-            }
-        };
-    }
-    startSync();
-
-    // ---------- АВТОРИЗАЦИЯ ----------
     const USERS = {
         wolf: { login: "волк", pass: "серый", role: "wolf", name: "Волк" },
         beaver: { login: "бобр", pass: "корич", role: "beaver", name: "Бобр" }
     };
 
-    let currentUser = null;
+    // ---------- ЗАГРУЗКА ИЗ FIREBASE ----------
+    function loadFromFirebase() {
+        const statusDiv = document.getElementById("syncStatus");
+        statusDiv.textContent = "Синхронизация...";
+        
+        dbRef.on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                orders = data.orders || [];
+                responses = data.responses || [];
+                statusDiv.textContent = "✅ Связано с облаком (все устройства видят изменения)";
+                setTimeout(() => {
+                    if (statusDiv.textContent.includes("Связано")) {
+                        statusDiv.style.opacity = "0.7";
+                    }
+                }, 2000);
+            } else {
+                // Первый запуск — создаём демо-данные
+                orders = [
+                    { id: crypto.randomUUID(), title: "Плотина", description: "Сделать плотину из брёвен", price: 100, status: "open" }
+                ];
+                responses = [];
+                saveToFirebase();
+                statusDiv.textContent = "✅ Демо-данные созданы в облаке";
+            }
+            
+            if (currentUser) {
+                render();
+            }
+        }, (error) => {
+            console.error("Firebase error:", error);
+            statusDiv.textContent = "⚠️ Ошибка подключения к облаку. Проверьте настройки Firebase";
+            statusDiv.style.background = "#ffebee";
+            statusDiv.style.color = "#c62828";
+        });
+    }
+
+    // ---------- СОХРАНЕНИЕ В FIREBASE ----------
+    function saveToFirebase() {
+        if (isSyncing) return;
+        dbRef.set({
+            orders: orders,
+            responses: responses,
+            lastUpdated: Date.now()
+        }).catch(error => {
+            console.error("Ошибка сохранения:", error);
+            document.getElementById("syncStatus").textContent = "⚠️ Ошибка сохранения";
+        });
+    }
+
+    // Обёртка для вызовов (автосохранение)
+    function syncAndSave() {
+        saveToFirebase();
+    }
 
     // ---------- БИЗНЕС-ЛОГИКА ----------
     function createOrder(title, description, price) {
@@ -261,14 +277,14 @@ hr {
             price: Number(price),
             status: "open"
         });
-        save();
+        syncAndSave();
         return true;
     }
 
     function deleteOrder(id) {
         orders = orders.filter(o => o.id !== id);
         responses = responses.filter(r => r.orderId !== id);
-        save();
+        syncAndSave();
     }
 
     function addResponse(orderId) {
@@ -278,7 +294,7 @@ hr {
         }
         const order = orders.find(o => o.id === orderId);
         if (!order || order.status !== "open") {
-            alert("Заказ уже закрыт");
+            alert("Этот заказ уже закрыт");
             return false;
         }
         responses.push({
@@ -287,7 +303,7 @@ hr {
             user: currentUser.name,
             status: "pending"
         });
-        save();
+        syncAndSave();
         return true;
     }
 
@@ -297,17 +313,16 @@ hr {
         const order = orders.find(o => o.id === resp.orderId);
         if (!order || order.status !== "open") return;
 
-        // обновляем статусы всех откликов на этот заказ
         responses.forEach(r => {
             if (r.orderId === resp.orderId) {
                 r.status = (r.id === respId) ? "accepted" : "rejected";
             }
         });
         order.status = "closed";
-        save();
+        syncAndSave();
     }
 
-    // ---------- ОТРИСОВКА (Адаптивная) ----------
+    // ---------- ОТРИСОВКА ----------
     function render() {
         const app = document.getElementById("app");
         if (!currentUser) {
@@ -324,19 +339,29 @@ hr {
     function renderLogin(app) {
         app.innerHTML = `
             <div style="text-align:center; margin-bottom:20px;">
-                <span style="font-size:28px;">🌲🐺🐿️</span>
+                <span style="font-size:28px;">🌲🐺🦫</span>
             </div>
-            <h3 style="text-align:center">Вход на биржу</h3>
+            <h3 style="text-align:center">Лесная биржа труда</h3>
             <input id="login" placeholder="Логин" autocomplete="off">
             <input id="pass" type="password" placeholder="Пароль">
             <button id="loginBtn" style="width:100%; margin-top:8px;">Войти</button>
             <p id="error" style="color:red; font-size:14px; text-align:center;"></p>
             <hr>
             <div style="background:#f0fdf4; padding:12px; border-radius:20px; font-size:14px;">
-                <strong>🐺 Волк:</strong> логин "волк" пароль "серый"<br>
-                <strong>🦫 Бобр:</strong> логин "бобр" пароль "корич"
+                <strong>🐺 Волк (заказчик):</strong> логин "волк" пароль "серый"<br>
+                <strong>🦫 Бобр (строитель):</strong> логин "бобр" пароль "корич"
             </div>
         `;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
     }
 
     function renderWolf(app) {
@@ -348,11 +373,10 @@ hr {
             const respListHtml = resps.length === 0 ? "<em>нет откликов</em>" :
                 resps.map(r => `
                     <div class="resp-block">
-                        <strong>${r.user}</strong> — <span class="${r.status}">${r.status === "pending" ? "⏳ ожидает" : (r.status === "accepted" ? "✅ принят" : "❌ отклонён")}</span>
+                        <strong>${escapeHtml(r.user)}</strong> — <span class="${r.status}">${r.status === "pending" ? "⏳ ожидает" : (r.status === "accepted" ? "✅ принят" : "❌ отклонён")}</span>
                         ${r.status === "pending" ? `<button data-accept="${r.id}" style="display:block; margin-top:6px;">✔ Принять</button>` : ""}
                     </div>
                 `).join("");
-
             return `
                 <tr>
                     <td data-label="Заказ"><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description) || "—"}</small></td>
@@ -427,29 +451,15 @@ hr {
             </div>
 
             <h3>🌲 Доступные заказы</h3>
-            <table>${availableRows || '<tr><td colspan="3" class="empty-message">Нет открытых заказов, зайдите позже</td></tr>'}</table>
+            <table>${availableRows || '<tr><td colspan="3" class="empty-message">Нет открытых заказов</td></tr>'}</table>
 
             <h3>📋 Мои отклики</h3>
             <table>${myRows || '<tr><td colspan="2" class="empty-message">Вы ещё не откликались</td></tr>'}</table>
         `;
     }
 
-    // вспомогательная функция для защиты от XSS
-    function escapeHtml(str) {
-        if (!str) return "";
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
-            return c;
-        });
-    }
-
-    // ---------- ОБРАБОТЧИКИ СОБЫТИЙ (через делегирование) ----------
+    // ---------- ОБРАБОТЧИКИ ----------
     document.addEventListener("click", (e) => {
-        // Логин
         if (e.target.id === "loginBtn") {
             const loginInput = document.getElementById("login");
             const passInput = document.getElementById("pass");
@@ -477,7 +487,6 @@ hr {
             render();
         }
 
-        // Волк: создать заказ
         if (e.target.id === "create") {
             const titleInp = document.getElementById("t");
             const descInp = document.getElementById("d");
@@ -488,53 +497,37 @@ hr {
                     if (titleInp) titleInp.value = "";
                     if (descInp) descInp.value = "";
                     if (priceInp) priceInp.value = "";
-                    render();
                 } else {
                     alert("Заполните название и цену");
                 }
             }
         }
 
-        // Удаление заказа
         if (e.target.dataset.del) {
             if (confirm("Удалить заказ? Отклики тоже пропадут")) {
                 deleteOrder(e.target.dataset.del);
-                render();
             }
         }
 
-        // Бобр: отклик
         if (e.target.dataset.resp) {
             const orderId = e.target.dataset.resp;
             const order = orders.find(o => o.id === orderId);
             if (!order || order.status !== "open") {
                 alert("Этот заказ уже закрыт");
-                render();
                 return;
             }
             addResponse(orderId);
-            render();
         }
 
-        // Волк: принять отклик
         if (e.target.dataset.accept) {
             if (confirm("Принять этот отклик? Другие будут отклонены, заказ закроется")) {
                 acceptResponse(e.target.dataset.accept);
-                render();
             }
         }
     });
 
-    // инициализация + автообновление при фокусе (доп. надежность)
-    window.addEventListener("focus", () => {
-        if (currentUser) {
-            orders = JSON.parse(localStorage.getItem("orders")) || [];
-            responses = JSON.parse(localStorage.getItem("responses")) || [];
-            render();
-        }
-    });
-
-    render();
+    // Запуск
+    loadFromFirebase();
 </script>
 </body>
 </html>
