@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+<title>Лесная биржа</title>
+<style>
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #e5e7eb;
+    margin: 0;
+    padding: 12px;
+}
+
+.box {
+    background: #fff;
+    padding: 16px;
+    border-radius: 20px;
+    max-width: 700px;
+    margin: 0 auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+/* Адаптивность */
+@media (max-width: 560px) {
+    body {
+        padding: 8px;
+    }
+    .box {
+        padding: 12px;
+        border-radius: 16px;
+    }
+    table, thead, tbody, th, td, tr {
+        display: block;
+    }
+    thead tr {
+        display: none;
+    }
+    tr {
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #fafafa;
+    }
+    td {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 8px 0;
+        border-bottom: 1px solid #e2e8f0;
+        gap: 12px;
+    }
+    td:last-child {
+        border-bottom: none;
+    }
+    td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: #2d3e2b;
+        min-width: 90px;
+        font-size: 0.85rem;
+    }
+    .resp-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    button, .btn-like {
+        width: 100%;
+        padding: 12px;
+        font-size: 16px;
+    }
+    .top {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+    .top button {
+        width: 100%;
+    }
+    input, textarea {
+        font-size: 16px !important;
+        padding: 12px !important;
+    }
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+}
+
+td, th {
+    padding: 10px 8px;
+    vertical-align: top;
+}
+
+th {
+    text-align: left;
+    background: #f3f4f6;
+    border-radius: 12px 12px 0 0;
+}
+
+button, .create-btn, #loginBtn, #logout {
+    background: #2d6a4f;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 40px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 14px;
+}
+
+button:active {
+    transform: scale(0.97);
+    background: #1b4d3e;
+}
+
+button.danger {
+    background: #b91c1c;
+}
+
+button.danger:active {
+    background: #7f1a1a;
+}
+
+input, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    margin: 6px 0 12px 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 28px;
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.pending {
+    color: #e67e22;
+    font-weight: 500;
+}
+.accepted {
+    color: #2e7d32;
+    font-weight: 500;
+}
+.rejected {
+    color: #c62828;
+    font-weight: 500;
+}
+
+.resp-block {
+    background: #f9f9f9;
+    border-radius: 12px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.resp-block button {
+    padding: 4px 12px;
+    font-size: 12px;
+    margin-top: 6px;
+    width: auto;
+}
+
+.empty-message {
+    color: #6c757d;
+    text-align: center;
+    padding: 20px;
+    font-style: italic;
+}
+
+hr {
+    margin: 20px 0;
+}
+
+/* статус заказа */
+.badge {
+    display: inline-block;
+    font-size: 11px;
+    background: #e9ecef;
+    border-radius: 40px;
+    padding: 2px 8px;
+    margin-left: 8px;
+}
+</style>
+</head>
+<body>
+<div class="box">
+    <div id="app"></div>
+</div>
+
+<script>
+    // ---------- ХРАНИЛИЩЕ ----------
+    let orders = JSON.parse(localStorage.getItem("orders")) || [];
+    let responses = JSON.parse(localStorage.getItem("responses")) || [];
+
+    // демо-заказ, если пусто
+    if (!orders.length) {
+        orders = [
+            { id: crypto.randomUUID(), title: "Плотина", description: "Сделать плотину из брёвен", price: 100, status: "open" }
+        ];
+        save();
+    }
+
+    function save() {
+        localStorage.setItem("orders", JSON.stringify(orders));
+        localStorage.setItem("responses", JSON.stringify(responses));
+        // Оповещаем все вкладки/устройства (в рамках одного домена)
+        const channel = new BroadcastChannel('lesnaya_birzha');
+        channel.postMessage({ type: 'UPDATE', timestamp: Date.now() });
+        channel.close();
+    }
+
+    // ---------- СИНХРОНИЗАЦИЯ МЕЖДУ ВКЛАДКАМИ / УСТРОЙСТВАМИ ----------
+    function startSync() {
+        const channel = new BroadcastChannel('lesnaya_birzha');
+        channel.onmessage = (event) => {
+            if (event.data && event.data.type === 'UPDATE') {
+                // Перезагружаем данные из localStorage
+                orders = JSON.parse(localStorage.getItem("orders")) || [];
+                responses = JSON.parse(localStorage.getItem("responses")) || [];
+                // Перерисовываем интерфейс, если пользователь залогинен
+                if (currentUser) {
+                    render();
+                }
+            }
+        };
+    }
+    startSync();
+
+    // ---------- АВТОРИЗАЦИЯ ----------
+    const USERS = {
+        wolf: { login: "волк", pass: "серый", role: "wolf", name: "Волк" },
+        beaver: { login: "бобр", pass: "корич", role: "beaver", name: "Бобр" }
+    };
+
+    let currentUser = null;
+
+    // ---------- БИЗНЕС-ЛОГИКА ----------
+    function createOrder(title, description, price) {
+        if (!title || !price) return false;
+        orders.push({
+            id: crypto.randomUUID(),
+            title: title.trim(),
+            description: description?.trim() || "",
+            price: Number(price),
+            status: "open"
+        });
+        save();
+        return true;
+    }
+
+    function deleteOrder(id) {
+        orders = orders.filter(o => o.id !== id);
+        responses = responses.filter(r => r.orderId !== id);
+        save();
+    }
+
+    function addResponse(orderId) {
+        if (responses.some(r => r.orderId === orderId && r.user === currentUser.name)) {
+            alert("Вы уже откликались на этот заказ");
+            return false;
+        }
+        const order = orders.find(o => o.id === orderId);
+        if (!order || order.status !== "open") {
+            alert("Заказ уже закрыт");
+            return false;
+        }
+        responses.push({
+            id: crypto.randomUUID(),
+            orderId,
+            user: currentUser.name,
+            status: "pending"
+        });
+        save();
+        return true;
+    }
+
+    function acceptResponse(respId) {
+        const resp = responses.find(r => r.id === respId);
+        if (!resp) return;
+        const order = orders.find(o => o.id === resp.orderId);
+        if (!order || order.status !== "open") return;
+
+        // обновляем статусы всех откликов на этот заказ
+        responses.forEach(r => {
+            if (r.orderId === resp.orderId) {
+                r.status = (r.id === respId) ? "accepted" : "rejected";
+            }
+        });
+        order.status = "closed";
+        save();
+    }
+
+    // ---------- ОТРИСОВКА (Адаптивная) ----------
+    function render() {
+        const app = document.getElementById("app");
+        if (!currentUser) {
+            renderLogin(app);
+            return;
+        }
+        if (currentUser.role === "wolf") {
+            renderWolf(app);
+        } else {
+            renderBeaver(app);
+        }
+    }
+
+    function renderLogin(app) {
+        app.innerHTML = `
+            <div style="text-align:center; margin-bottom:20px;">
+                <span style="font-size:28px;">🌲🐺🐿️</span>
+            </div>
+            <h3 style="text-align:center">Вход на биржу</h3>
+            <input id="login" placeholder="Логин" autocomplete="off">
+            <input id="pass" type="password" placeholder="Пароль">
+            <button id="loginBtn" style="width:100%; margin-top:8px;">Войти</button>
+            <p id="error" style="color:red; font-size:14px; text-align:center;"></p>
+            <hr>
+            <div style="background:#f0fdf4; padding:12px; border-radius:20px; font-size:14px;">
+                <strong>🐺 Волк:</strong> логин "волк" пароль "серый"<br>
+                <strong>🦫 Бобр:</strong> логин "бобр" пароль "корич"
+            </div>
+        `;
+    }
+
+    function renderWolf(app) {
+        const openOrders = orders.filter(o => o.status === "open");
+        const closedOrders = orders.filter(o => o.status === "closed");
+
+        const openRows = openOrders.map(o => {
+            const resps = responses.filter(r => r.orderId === o.id);
+            const respListHtml = resps.length === 0 ? "<em>нет откликов</em>" :
+                resps.map(r => `
+                    <div class="resp-block">
+                        <strong>${r.user}</strong> — <span class="${r.status}">${r.status === "pending" ? "⏳ ожидает" : (r.status === "accepted" ? "✅ принят" : "❌ отклонён")}</span>
+                        ${r.status === "pending" ? `<button data-accept="${r.id}" style="display:block; margin-top:6px;">✔ Принять</button>` : ""}
+                    </div>
+                `).join("");
+
+            return `
+                <tr>
+                    <td data-label="Заказ"><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description) || "—"}</small></td>
+                    <td data-label="Цена">💰 ${o.price} монет</td>
+                    <td data-label="Отклики">${respListHtml}</td>
+                    <td data-label="Управление"><button class="danger" data-del="${o.id}">🗑 Удалить</button></td>
+                </tr>
+            `;
+        }).join("");
+
+        const closedRows = closedOrders.map(o => `
+            <tr style="opacity:0.7">
+                <td data-label="Заказ"><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description) || "—"}</small></td>
+                <td data-label="Цена">💰 ${o.price}</td>
+                <td data-label="Статус">🔒 Закрыт</td>
+                <td data-label="Управление"><button class="danger" data-del="${o.id}">🗑</button></td>
+            </tr>
+        `).join("");
+
+        app.innerHTML = `
+            <div class="top">
+                <div><strong>🐺 ${currentUser.name}</strong> (заказчик)</div>
+                <button id="logout">🚪 Выйти</button>
+            </div>
+
+            <div style="background:#e8f5e9; border-radius:20px; padding:12px; margin-bottom:24px;">
+                <h3 style="margin:0 0 10px 0">📝 Создать заказ</h3>
+                <input id="t" placeholder="Название (обязательно)">
+                <textarea id="d" placeholder="Описание" rows="2"></textarea>
+                <input id="p" type="number" placeholder="Цена в монетах">
+                <button id="create" style="width:100%;">➕ Создать заказ</button>
+            </div>
+
+            <h3>🔥 Активные заказы</h3>
+            <table>${openRows || '<tr><td colspan="4" class="empty-message">Нет открытых заказов</td></tr>'}</table>
+
+            <h3>📦 Архив (закрытые)</h3>
+            <table>${closedRows || '<tr><td colspan="4" class="empty-message">Нет закрытых заказов</td></tr>'}</table>
+        `;
+    }
+
+    function renderBeaver(app) {
+        const available = orders.filter(o => o.status === "open");
+        const availableRows = available.map(o => `
+            <tr>
+                <td data-label="Название"><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description) || "без описания"}</small></td>
+                <td data-label="Цена">💰 ${o.price} монет</td>
+                <td data-label="Действие"><button data-resp="${o.id}" style="background:#ffb703;">📨 Откликнуться</button></td>
+            </tr>
+        `).join("");
+
+        const myResponses = responses.filter(r => r.user === currentUser.name);
+        const myRows = myResponses.map(r => {
+            const order = orders.find(o => o.id === r.orderId);
+            const orderTitle = order ? order.title : "❌ удалён";
+            let statusText = "";
+            if (r.status === "pending") statusText = "⏳ На рассмотрении";
+            else if (r.status === "accepted") statusText = "✅ Принят! Можно работать";
+            else statusText = "❌ Отклонён";
+            return `
+                <tr>
+                    <td data-label="Заказ">${escapeHtml(orderTitle)}</td>
+                    <td data-label="Статус" class="${r.status}">${statusText}</td>
+                </tr>
+            `;
+        }).join("");
+
+        app.innerHTML = `
+            <div class="top">
+                <div><strong>🦫 ${currentUser.name}</strong> (строитель)</div>
+                <button id="logout">🚪 Выйти</button>
+            </div>
+
+            <h3>🌲 Доступные заказы</h3>
+            <table>${availableRows || '<tr><td colspan="3" class="empty-message">Нет открытых заказов, зайдите позже</td></tr>'}</table>
+
+            <h3>📋 Мои отклики</h3>
+            <table>${myRows || '<tr><td colspan="2" class="empty-message">Вы ещё не откликались</td></tr>'}</table>
+        `;
+    }
+
+    // вспомогательная функция для защиты от XSS
+    function escapeHtml(str) {
+        if (!str) return "";
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+            return c;
+        });
+    }
+
+    // ---------- ОБРАБОТЧИКИ СОБЫТИЙ (через делегирование) ----------
+    document.addEventListener("click", (e) => {
+        // Логин
+        if (e.target.id === "loginBtn") {
+            const loginInput = document.getElementById("login");
+            const passInput = document.getElementById("pass");
+            const errorSpan = document.getElementById("error");
+            if (!loginInput || !passInput) return;
+            const l = loginInput.value;
+            const p = passInput.value;
+            let found = null;
+            for (const u of Object.values(USERS)) {
+                if (u.login === l && u.pass === p) {
+                    found = u;
+                    break;
+                }
+            }
+            if (!found) {
+                if (errorSpan) errorSpan.textContent = "Неверный логин или пароль";
+                return;
+            }
+            currentUser = found;
+            render();
+        }
+
+        if (e.target.id === "logout") {
+            currentUser = null;
+            render();
+        }
+
+        // Волк: создать заказ
+        if (e.target.id === "create") {
+            const titleInp = document.getElementById("t");
+            const descInp = document.getElementById("d");
+            const priceInp = document.getElementById("p");
+            if (titleInp && priceInp) {
+                const success = createOrder(titleInp.value, descInp?.value || "", priceInp.value);
+                if (success) {
+                    if (titleInp) titleInp.value = "";
+                    if (descInp) descInp.value = "";
+                    if (priceInp) priceInp.value = "";
+                    render();
+                } else {
+                    alert("Заполните название и цену");
+                }
+            }
+        }
+
+        // Удаление заказа
+        if (e.target.dataset.del) {
+            if (confirm("Удалить заказ? Отклики тоже пропадут")) {
+                deleteOrder(e.target.dataset.del);
+                render();
+            }
+        }
+
+        // Бобр: отклик
+        if (e.target.dataset.resp) {
+            const orderId = e.target.dataset.resp;
+            const order = orders.find(o => o.id === orderId);
+            if (!order || order.status !== "open") {
+                alert("Этот заказ уже закрыт");
+                render();
+                return;
+            }
+            addResponse(orderId);
+            render();
+        }
+
+        // Волк: принять отклик
+        if (e.target.dataset.accept) {
+            if (confirm("Принять этот отклик? Другие будут отклонены, заказ закроется")) {
+                acceptResponse(e.target.dataset.accept);
+                render();
+            }
+        }
+    });
+
+    // инициализация + автообновление при фокусе (доп. надежность)
+    window.addEventListener("focus", () => {
+        if (currentUser) {
+            orders = JSON.parse(localStorage.getItem("orders")) || [];
+            responses = JSON.parse(localStorage.getItem("responses")) || [];
+            render();
+        }
+    });
+
+    render();
+</script>
+</body>
+</html>
