@@ -2,345 +2,295 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Лесная биржа</title>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 <style>
-* { box-sizing: border-box; }
-body { font-family: system-ui, -apple-system, sans-serif; background: #e5e7eb; margin: 0; padding: 12px; }
-.box { background: white; padding: 16px; border-radius: 20px; max-width: 600px; margin: 0 auto; }
-button { background: #2d6a4f; color: white; border: none; padding: 12px 20px; border-radius: 40px; font-weight: bold; cursor: pointer; width: 100%; margin: 5px 0; font-size: 16px; }
-button.danger { background: #b91c1c; }
-button.refresh { background: #2196f3; }
-input, textarea { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 30px; font-size: 16px; }
-.card { background: #f9f9f9; border-radius: 16px; padding: 12px; margin-bottom: 12px; border: 1px solid #e0e0e0; }
-.status { font-size: 13px; padding: 8px; border-radius: 20px; text-align: center; margin-bottom: 12px; }
-.pending { color: #e67e22; }
-.accepted { color: #2e7d32; }
-.rejected { color: #c62828; }
-hr { margin: 20px 0; }
+body { font-family: sans-serif; background:#eee; padding:20px; }
+.box { background:#fff; padding:20px; border-radius:10px; max-width:900px; margin:auto; }
+table { width:100%; border-collapse: collapse; margin-top:10px; }
+td, th { border-bottom:1px solid #ddd; padding:8px; }
+button { cursor:pointer; }
+.top { display:flex; justify-content:space-between; margin-bottom:15px; }
+.pending { color:orange; }
+.accepted { color:green; }
+.rejected { color:red; }
+
+/* адаптив */
+@media (max-width: 700px) {
+    body { padding: 10px; }
+    .box { padding: 15px; }
+
+    .top {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+
+    input, button {
+        width: 100%;
+        margin-top: 5px;
+    }
+
+    table, thead, tbody, tr, td, th {
+        display: block;
+        width: 100%;
+    }
+
+    tr {
+        margin-bottom: 15px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 10px;
+    }
+
+    td, th {
+        border: none;
+        padding: 5px 0;
+    }
+
+    th { display: none; }
+}
 </style>
 </head>
 <body>
+
+<p style="text-align:center; font-size:30px">Лесная биржа труда</p>
+
 <div class="box">
-    <h2 style="text-align:center">🌲 Лесная биржа</h2>
-    <div id="status" class="status" style="background:#f0fdf4;">🔄 Проверка подключения...</div>
     <div id="app"></div>
 </div>
 
-<script>
-// КОНФИГ FIREBASE (ваш)
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { 
+    getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot 
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
 const firebaseConfig = {
   apiKey: "AIzaSyAj31iKIuQK2q-grcT9rUhFG7nS2Cwq7Bw",
   authDomain: "job-e130b.firebaseapp.com",
-  databaseURL: "https://job-e130b-default-rtdb.firebaseio.com",
   projectId: "job-e130b",
   storageBucket: "job-e130b.firebasestorage.app",
   messagingSenderId: "305895075912",
   appId: "1:305895075912:web:e3454cbd53416bedfa287d"
 };
 
-// Инициализация
-firebase.initializeApp(firebaseConfig);
-const database = firebase.database();
-const dbRef = database.ref('/lesnayaBirzha');
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-// Данные
+// данные
 let orders = [];
 let responses = [];
-let currentUser = null;
 
+// синхронизация
+onSnapshot(collection(db, "orders"), snapshot => {
+    orders = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+});
+
+onSnapshot(collection(db, "responses"), snapshot => {
+    responses = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+});
+
+// AUTH
 const USERS = {
-    wolf: { login: "волк", pass: "серый", role: "wolf", name: "Волк" },
-    beaver: { login: "бобр", pass: "корич", role: "beaver", name: "Бобр" }
+    wolf: { login:"волк", pass:"серый", role:"wolf", name:"Волк" },
+    beaver: { login:"бобр", pass:"корич", role:"beaver", name:"Бобр" }
 };
 
-// Функция загрузки данных (ОДНОКРАТНАЯ, без бесконечного слушателя)
-function loadDataFromFirebase(callback) {
-    const statusDiv = document.getElementById("status");
-    statusDiv.innerHTML = "⏳ Загрузка данных из облака...";
-    statusDiv.style.background = "#fff3e0";
-    
-    dbRef.once('value').then((snapshot) => {
-        const data = snapshot.val();
-        if (data && data.orders) {
-            orders = data.orders;
-            responses = data.responses || [];
-            statusDiv.innerHTML = "✅ Данные загружены из облака";
-            statusDiv.style.background = "#e8f5e9";
-            setTimeout(() => {
-                statusDiv.innerHTML = "📡 Онлайн режим (нажмите «Обновить» для синхронизации)";
-                statusDiv.style.background = "#e3f2fd";
-            }, 2000);
-        } else {
-            // Первый запуск - создаём демо
-            orders = [
-                { id: crypto.randomUUID(), title: "Плотина", description: "Сделать плотину", price: 100, status: "open" }
-            ];
-            responses = [];
-            saveToFirebase();
-            statusDiv.innerHTML = "✅ Демо-данные созданы";
-        }
-        if (callback) callback();
-    }).catch((error) => {
-        console.error("Ошибка:", error);
-        statusDiv.innerHTML = "❌ Ошибка подключения к Firebase! Проверьте интернет и настройки";
-        statusDiv.style.background = "#ffebee";
-        statusDiv.style.color = "#c62828";
+let currentUser = null;
+
+// ACTIONS
+async function createOrder() {
+    if (!t.value || !p.value) return;
+
+    await addDoc(collection(db, "orders"), {
+        title: t.value,
+        description: d.value || "",
+        price: +p.value,
+        status:"open"
     });
+
+    t.value = "";
+    d.value = "";
+    p.value = "";
 }
 
-// Сохранение в Firebase
-function saveToFirebase() {
-    const statusDiv = document.getElementById("status");
-    statusDiv.innerHTML = "💾 Сохранение в облако...";
-    statusDiv.style.background = "#fff3e0";
-    
-    dbRef.set({
-        orders: orders,
-        responses: responses,
-        lastUpdated: Date.now()
-    }).then(() => {
-        statusDiv.innerHTML = "✅ Сохранено! Нажмите «Обновить» на другом устройстве";
-        statusDiv.style.background = "#e8f5e9";
-        setTimeout(() => {
-            statusDiv.innerHTML = "📡 Готово (нажмите «Обновить» для синхронизации)";
-            statusDiv.style.background = "#e3f2fd";
-        }, 2000);
-    }).catch((error) => {
-        statusDiv.innerHTML = "❌ Ошибка сохранения: " + error.message;
-        statusDiv.style.background = "#ffebee";
-    });
+async function deleteOrder(id) {
+    await deleteDoc(doc(db, "orders", id));
 }
 
-// Функция обновления (вручную)
-function refreshData() {
-    loadDataFromFirebase(() => {
-        if (currentUser) render();
-    });
-}
+async function addResponse(orderId) {
+    if (responses.some(r => r.orderId === orderId && r.user === currentUser.name)) return;
 
-// Бизнес-логика
-function createOrder(title, description, price) {
-    if (!title || !price) return false;
-    orders.unshift({
-        id: crypto.randomUUID(),
-        title: title.trim(),
-        description: description?.trim() || "",
-        price: Number(price),
-        status: "open"
-    });
-    saveToFirebase();
-    return true;
-}
-
-function deleteOrder(id) {
-    orders = orders.filter(o => o.id !== id);
-    responses = responses.filter(r => r.orderId !== id);
-    saveToFirebase();
-}
-
-function addResponse(orderId) {
-    if (responses.some(r => r.orderId === orderId && r.user === currentUser.name)) {
-        alert("Вы уже откликались");
-        return false;
-    }
-    const order = orders.find(o => o.id === orderId);
-    if (!order || order.status !== "open") {
-        alert("Заказ закрыт");
-        return false;
-    }
-    responses.push({
-        id: crypto.randomUUID(),
+    await addDoc(collection(db, "responses"), {
         orderId,
         user: currentUser.name,
-        status: "pending"
+        status:"pending"
     });
-    saveToFirebase();
-    return true;
 }
 
-function acceptResponse(respId) {
+async function acceptResponse(respId) {
     const resp = responses.find(r => r.id === respId);
     if (!resp) return;
-    const order = orders.find(o => o.id === resp.orderId);
-    if (!order || order.status !== "open") return;
-    
-    responses.forEach(r => {
+
+    for (const r of responses) {
         if (r.orderId === resp.orderId) {
-            r.status = (r.id === respId) ? "accepted" : "rejected";
+            await updateDoc(doc(db, "responses", r.id), {
+                status: r.id === respId ? "accepted" : "rejected"
+            });
         }
+    }
+
+    await updateDoc(doc(db, "orders", resp.orderId), {
+        status: "closed"
     });
-    order.status = "closed";
-    saveToFirebase();
 }
 
+// UI
 function render() {
     const app = document.getElementById("app");
+
     if (!currentUser) {
         app.innerHTML = `
-            <input id="login" placeholder="Логин">
-            <input id="pass" type="password" placeholder="Пароль">
+            <h3>Вход</h3>
+            <input id="login" placeholder="логин">
+            <input id="pass" type="password" placeholder="пароль">
             <button id="loginBtn">Войти</button>
-            <hr>
-            <div style="background:#f0fdf4; padding:12px; border-radius:16px;">
-                🐺 Волк: логин "волк" пароль "серый"<br>
-                🦫 Бобр: логин "бобр" пароль "корич"
-            </div>
-            <button id="refreshBtn" class="refresh" style="margin-top:15px;">⟳ Обновить данные</button>
+            <p id="error" style="color:red"></p>
+            <p style="color: gray">волк / серый или бобр / корич</p>
         `;
         return;
     }
-    
-    if (currentUser.role === "wolf") {
-        const openOrders = orders.filter(o => o.status === "open");
-        const closedOrders = orders.filter(o => o.status === "closed");
-        
-        app.innerHTML = `
-            <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-                <strong>🐺 ${currentUser.name}</strong>
-                <button id="logout" style="width:auto;">Выйти</button>
-            </div>
-            <button id="refreshBtn" class="refresh">⟳ Обновить данные</button>
-            
-            <div style="background:#e8f5e9; padding:12px; border-radius:16px; margin:15px 0;">
-                <h3>📝 Новый заказ</h3>
-                <input id="t" placeholder="Название">
-                <textarea id="d" placeholder="Описание" rows="2"></textarea>
-                <input id="p" type="number" placeholder="Цена">
-                <button id="create">➕ Создать</button>
-            </div>
-            
-            <h3>🔥 Активные</h3>
-            ${openOrders.map(o => `
-                <div class="card">
-                    <strong>${escapeHtml(o.title)}</strong><br>
-                    <small>${escapeHtml(o.description) || "—"}</small><br>
-                    💰 ${o.price} монет<br>
-                    <div style="margin-top:8px;">
-                        <strong>Отклики:</strong>
-                        ${responses.filter(r=>r.orderId===o.id).map(r=>`
-                            <div style="background:#fff; padding:6px; margin:5px 0; border-radius:12px;">
-                                ${escapeHtml(r.user)} — <span class="${r.status}">${r.status==="pending"?"⏳ ожидает":r.status==="accepted"?"✅ принят":"❌ отклонён"}</span>
-                                ${r.status==="pending"?`<button data-accept="${r.id}" style="width:auto; padding:6px 12px; margin-top:5px;">✔ Принять</button>`:""}
-                            </div>
-                        `).join("") || "нет"}
-                    </div>
-                    <button class="danger" data-del="${o.id}" style="margin-top:10px;">🗑 Удалить</button>
-                </div>
-            `).join("") || "<div class='card'>Нет активных заказов</div>"}
-            
-            <h3>📦 Архив</h3>
-            ${closedOrders.map(o => `
-                <div class="card" style="opacity:0.7;">
-                    <strong>${escapeHtml(o.title)}</strong> — 💰 ${o.price} 🔒 Закрыт
-                    <button class="danger" data-del="${o.id}" style="margin-top:8px;">🗑</button>
-                </div>
-            `).join("") || "<div class='card'>Нет закрытых</div>"}
-        `;
-    } else {
-        const available = orders.filter(o => o.status === "open");
-        const myResponses = responses.filter(r => r.user === currentUser.name);
-        
-        app.innerHTML = `
-            <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-                <strong>🦫 ${currentUser.name}</strong>
-                <button id="logout" style="width:auto;">Выйти</button>
-            </div>
-            <button id="refreshBtn" class="refresh">⟳ Обновить данные</button>
-            
-            <h3>🌲 Доступные заказы</h3>
-            ${available.map(o => `
-                <div class="card">
-                    <strong>${escapeHtml(o.title)}</strong><br>
-                    <small>${escapeHtml(o.description) || "—"}</small><br>
-                    💰 ${o.price} монет<br>
-                    <button data-resp="${o.id}" style="margin-top:8px;">📨 Откликнуться</button>
-                </div>
-            `).join("") || "<div class='card'>Нет доступных заказов</div>"}
-            
-            <h3>📋 Мои отклики</h3>
-            ${myResponses.map(r => {
-                const order = orders.find(o=>o.id===r.orderId);
-                return `<div class="card">
-                    <strong>${order ? escapeHtml(order.title) : "❌ удалён"}</strong><br>
-                    Статус: <span class="${r.status}">${r.status==="pending"?"⏳ На рассмотрении":r.status==="accepted"?"✅ Принят!":"❌ Отклонён"}</span>
-                </div>`;
-            }).join("") || "<div class='card'>Вы ещё не откликались</div>"}
-        `;
-    }
+
+    if (currentUser.role === "wolf") renderWolf(app);
+    else renderBeaver(app);
 }
 
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/[&<>]/g, function(m) {
-        if (m === '&') return '&amp;';
-        if (m === '<') return '&lt;';
-        if (m === '>') return '&gt;';
-        return m;
-    });
+function header() {
+    return `
+        <div class="top">
+            <div>${currentUser.name} (${currentUser.role})</div>
+            <button id="logout">Выйти</button>
+        </div>
+    `;
 }
 
-// Обработчики событий
-document.addEventListener("click", (e) => {
+// ВОЛК
+function renderWolf(app) {
+    const rows = orders.map(o => {
+        const resps = responses.filter(r => r.orderId === o.id);
+
+        const respList = resps.map(r => `
+            <div>
+                ${r.user} — <span class="${r.status}">${r.status}</span>
+                ${r.status === "pending" ? `<button data-accept="${r.id}">Принять</button>` : ""}
+            </div>
+        `).join("");
+
+        return `
+        <tr>
+            <td>${o.title}<br><small>${o.description}</small></td>
+            <td>${o.price}</td>
+            <td>${respList || "нет"}</td>
+            <td><button data-del="${o.id}">X</button></td>
+        </tr>`;
+    }).join("");
+
+    app.innerHTML = `
+        ${header()}
+        <h3>Создать заказ</h3>
+        <input id="t" placeholder="название">
+        <input id="d" placeholder="описание">
+        <input id="p" type="number" placeholder="цена">
+        <button id="create">Создать</button>
+
+        <h3>Заказы</h3>
+        <table>
+            <tr><th>Название</th><th>Цена</th><th>Отклики</th><th></th></tr>
+            ${rows}
+        </table>
+    `;
+}
+
+// БОБР
+function renderBeaver(app) {
+    const rows = orders.filter(o=>o.status==="open").map(o => `
+        <tr>
+            <td>${o.title}<br><small>${o.description}</small></td>
+            <td>${o.price}</td>
+            <td><button data-resp="${o.id}">Отклик</button></td>
+        </tr>
+    `).join("");
+
+    const my = responses.filter(r=>r.user===currentUser.name).map(r => `
+        <tr>
+            <td>${orders.find(o=>o.id===r.orderId)?.title}</td>
+            <td class="${r.status}">${r.status}</td>
+        </tr>
+    `).join("");
+
+    app.innerHTML = `
+        ${header()}
+        <h3>Доступные</h3>
+        <table>${rows}</table>
+
+        <h3>Мои отклики</h3>
+        <table>${my}</table>
+    `;
+}
+
+// EVENTS
+document.addEventListener("click", e => {
+
     if (e.target.id === "loginBtn") {
-        const login = document.getElementById("login").value;
-        const pass = document.getElementById("pass").value;
-        let found = null;
+        const l = login.value;
+        const p = pass.value;
+
+        let foundUser = null;
+
         for (const u of Object.values(USERS)) {
-            if (u.login === login && u.pass === pass) { found = u; break; }
+            if (u.login === l && u.pass === p) {
+                foundUser = u;
+                break;
+            }
         }
-        if (!found) { alert("Неверный логин или пароль"); return; }
-        currentUser = found;
-        loadDataFromFirebase(() => render());
+
+        if (!foundUser) {
+            document.getElementById("error").textContent = "Неверный логин или пароль";
+            return;
+        }
+
+        currentUser = foundUser;
+        render();
     }
-    
+
     if (e.target.id === "logout") {
         currentUser = null;
         render();
     }
-    
-    if (e.target.id === "refreshBtn") {
-        refreshData();
-    }
-    
+
     if (e.target.id === "create") {
-        const title = document.getElementById("t").value;
-        const desc = document.getElementById("d").value;
-        const price = document.getElementById("p").value;
-        if (createOrder(title, desc, price)) {
-            document.getElementById("t").value = "";
-            document.getElementById("d").value = "";
-            document.getElementById("p").value = "";
-            render();
-        } else {
-            alert("Заполните название и цену");
-        }
+        createOrder();
     }
-    
+
     if (e.target.dataset.del) {
-        if (confirm("Удалить заказ?")) {
-            deleteOrder(e.target.dataset.del);
-            render();
-        }
+        deleteOrder(e.target.dataset.del);
     }
-    
+
     if (e.target.dataset.resp) {
         addResponse(e.target.dataset.resp);
-        render();
     }
-    
+
     if (e.target.dataset.accept) {
-        if (confirm("Принять отклик?")) {
-            acceptResponse(e.target.dataset.accept);
-            render();
-        }
+        acceptResponse(e.target.dataset.accept);
     }
+
 });
 
-// Запуск
-loadDataFromFirebase(() => render());
+render();
 </script>
+
 </body>
 </html>
