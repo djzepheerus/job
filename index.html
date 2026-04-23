@@ -214,16 +214,21 @@ function renderWolf(app) {
 
         <h3>Заказы</h3>
         <table>
-            <tr><th>Название</th><th>Цена</th><th>Отклики</th><th></th></tr>
-            ${rows}
+            <thead>
+                <tr><th>Название</th><th>Цена</th><th>Отклики</th><th></th></tr>
+            </thead>
+            <tbody>
+                ${rows}
+            </tbody>
         </table>
     `;
 }
 
 // БОБР
 function renderBeaver(app) {
-    // Показываем только открытые заказы
-    const rows = orders.filter(o => o.status === "open").map(o => `
+    // Доступные заказы — только открытые
+    const availableOrders = orders.filter(o => o.status === "open");
+    const rows = availableOrders.map(o => `
         <tr>
             <td>${o.title}<br><small>${o.description}</small></td>
             <td>${o.price}</td>
@@ -231,13 +236,12 @@ function renderBeaver(app) {
         </tr>
     `).join("");
 
-    // Фильтруем отклики текущего пользователя и проверяем, существует ли ещё заказ
-    const my = responses
+    // Мои отклики — только для существующих заказов
+    const myResponsesList = responses
         .filter(r => r.user === currentUser.name)
         .map(r => {
             const order = orders.find(o => o.id === r.orderId);
-            // Если заказ удалён — не показываем этот отклик
-            if (!order) return null;
+            if (!order) return null; // заказ удалён — не показываем
             return `
             <tr>
                 <td>${order.title}</td>
@@ -245,16 +249,24 @@ function renderBeaver(app) {
             </tr>
             `;
         })
-        .filter(item => item !== null) // убираем undefined строки
+        .filter(item => item !== null)
         .join("");
 
     app.innerHTML = `
         ${header()}
         <h3>Доступные</h3>
-        <tr>${rows || '<tr><td colspan="3">Нет доступных заказов</td></tr>'}</table>
+        <table>
+            <tbody>
+                ${rows || '<tr><td colspan="3">Нет доступных заказов</td></tr>'}
+            </tbody>
+        </table>
 
         <h3>Мои отклики</h3>
-        <td>${my || '<tr><td colspan="2">Нет откликов</td></tr>'}</table>
+        <table>
+            <tbody>
+                ${myResponsesList || '<tr><td colspan="2">Нет откликов</td></tr>'}
+            </tbody>
+        </table>
     `;
 }
 
