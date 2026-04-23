@@ -8,47 +8,21 @@
 body { font-family: sans-serif; background:#eee; padding:20px; }
 .box { background:#fff; padding:20px; border-radius:10px; max-width:900px; margin:auto; }
 table { width:100%; border-collapse: collapse; margin-top:10px; }
-td, th { border-bottom:1px solid #ddd; padding:8px; }
+td, th { border-bottom:1px solid #ddd; padding:8px; text-align:left; vertical-align:top; }
 button { cursor:pointer; }
-.top { display:flex; justify-content:space-between; margin-bottom:15px; }
+.top { display:flex; justify-content:space-between; margin-bottom:15px; flex-wrap:wrap; gap:10px; }
 .pending { color:orange; }
 .accepted { color:green; }
 .rejected { color:red; }
 
-/* адаптив */
+/* адаптив — таблица становится прокручиваемой на телефонах, но остаётся таблицей */
 @media (max-width: 700px) {
     body { padding: 10px; }
     .box { padding: 15px; }
-
-    .top {
-        flex-direction: column;
-        gap: 10px;
-        align-items: flex-start;
-    }
-
-    input, button {
-        width: 100%;
-        margin-top: 5px;
-    }
-
-    table, thead, tbody, tr, td, th {
-        display: block;
-        width: 100%;
-    }
-
-    tr {
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 10px;
-    }
-
-    td, th {
-        border: none;
-        padding: 5px 0;
-    }
-
-    th { display: none; }
+    .top { flex-direction: column; align-items: flex-start; }
+    input, button { width: 100%; margin-top: 5px; box-sizing:border-box; }
+    .table-wrapper { overflow-x: auto; display: block; width: 100%; }
+    table { min-width: 500px; }
 }
 </style>
 </head>
@@ -78,11 +52,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// данные
 let orders = [];
 let responses = [];
 
-// синхронизация
 onSnapshot(collection(db, "orders"), snapshot => {
     orders = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     render();
@@ -93,7 +65,6 @@ onSnapshot(collection(db, "responses"), snapshot => {
     render();
 });
 
-// AUTH
 const USERS = {
     wolf: { login:"волк", pass:"серый", role:"wolf", name:"Волк" },
     beaver: { login:"бобр", pass:"корич", role:"beaver", name:"Бобр" }
@@ -101,35 +72,35 @@ const USERS = {
 
 let currentUser = null;
 
-// ACTIONS
 async function createOrder() {
-    if (!t.value || !p.value) return;
+    const titleInput = document.getElementById("t");
+    const descInput = document.getElementById("d");
+    const priceInput = document.getElementById("p");
+    if (!titleInput || !priceInput) return;
+    if (!titleInput.value || !priceInput.value) return;
 
     await addDoc(collection(db, "orders"), {
-        title: t.value,
-        description: d.value || "",
-        price: +p.value,
+        title: titleInput.value,
+        description: descInput?.value || "",
+        price: +priceInput.value,
         status:"open"
     });
 
-    t.value = "";
-    d.value = "";
-    p.value = "";
+    titleInput.value = "";
+    if (descInput) descInput.value = "";
+    priceInput.value = "";
 }
 
 async function deleteOrder(id) {
-    // сначала удаляем все отклики, связанные с этим заказом
     const relatedResponses = responses.filter(r => r.orderId === id);
     for (const resp of relatedResponses) {
         await deleteDoc(doc(db, "responses", resp.id));
     }
-    // потом удаляем сам заказ
     await deleteDoc(doc(db, "orders", id));
 }
 
 async function addResponse(orderId) {
     if (responses.some(r => r.orderId === orderId && r.user === currentUser.name)) return;
-
     await addDoc(collection(db, "responses"), {
         orderId,
         user: currentUser.name,
@@ -154,12 +125,10 @@ async function acceptResponse(respId) {
     });
 }
 
-// UI
 function render() {
-    const app = document.getElementById("app");
-
+    const appDiv = document.getElementById("app");
     if (!currentUser) {
-        app.innerHTML = `
+        appDiv.innerHTML = `
             <h3>Вход</h3>
             <input id="login" placeholder="логин">
             <input id="pass" type="password" placeholder="пароль">
@@ -169,9 +138,8 @@ function render() {
         `;
         return;
     }
-
-    if (currentUser.role === "wolf") renderWolf(app);
-    else renderBeaver(app);
+    if (currentUser.role === "wolf") renderWolf(appDiv);
+    else renderBeaver(appDiv);
 }
 
 function header() {
@@ -183,25 +151,23 @@ function header() {
     `;
 }
 
-// ВОЛК
 function renderWolf(app) {
     const rows = orders.map(o => {
         const resps = responses.filter(r => r.orderId === o.id);
-
         const respList = resps.map(r => `
-            <div>
+            <div style="margin-bottom:6px;">
                 ${r.user} — <span class="${r.status}">${r.status}</span>
-                ${r.status === "pending" ? `<button data-accept="${r.id}">Принять</button>` : ""}
+                ${r.status === "pending" ? `<button data-accept="${r.id}" style="margin-left:6px;">Принять</button>` : ""}
             </div>
         `).join("");
-
         return `
         <tr>
-            <td>${o.title}<br><small>${o.description}</small></td>
+            <td><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description)}</small></td>
             <td>${o.price}</td>
             <td>${respList || "нет"}</td>
             <td><button data-del="${o.id}">X</button></td>
-        </tr>`;
+        </tr>
+        `;
     }).join("");
 
     app.innerHTML = `
@@ -213,38 +179,35 @@ function renderWolf(app) {
         <button id="create">Создать</button>
 
         <h3>Заказы</h3>
-        <table>
-            <thead>
-                <tr><th>Название</th><th>Цена</th><th>Отклики</th><th></th></tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Название</th><th>Цена</th><th>Отклики</th><th></th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
     `;
 }
 
-// БОБР
 function renderBeaver(app) {
-    // Доступные заказы — только открытые
     const availableOrders = orders.filter(o => o.status === "open");
     const rows = availableOrders.map(o => `
         <tr>
-            <td>${o.title}<br><small>${o.description}</small></td>
+            <td><strong>${escapeHtml(o.title)}</strong><br><small>${escapeHtml(o.description)}</small></td>
             <td>${o.price}</td>
             <td><button data-resp="${o.id}">Отклик</button></td>
         </tr>
     `).join("");
 
-    // Мои отклики — только для существующих заказов
     const myResponsesList = responses
         .filter(r => r.user === currentUser.name)
         .map(r => {
             const order = orders.find(o => o.id === r.orderId);
-            if (!order) return null; // заказ удалён — не показываем
+            if (!order) return null;
             return `
             <tr>
-                <td>${order.title}</td>
+                <td><strong>${escapeHtml(order.title)}</strong></td>
                 <td class="${r.status}">${r.status}</td>
             </tr>
             `;
@@ -255,71 +218,81 @@ function renderBeaver(app) {
     app.innerHTML = `
         ${header()}
         <h3>Доступные</h3>
-        <table>
-            <tbody>
-                ${rows || '<tr><td colspan="3">Нет доступных заказов</td></tr>'}
-            </tbody>
-        </table>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Название</th><th>Цена</th><th></th></tr>
+                </thead>
+                <tbody>${rows || '<tr><td colspan="3">Нет доступных заказов</td></tr>'}</tbody>
+            </table>
+        </div>
 
         <h3>Мои отклики</h3>
-        <table>
-            <tbody>
-                ${myResponsesList || '<tr><td colspan="2">Нет откликов</td></tr>'}
-            </tbody>
-        </table>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr><th>Заказ</th><th>Статус</th></tr>
+                </thead>
+                <tbody>${myResponsesList || '<tr><td colspan="2">Нет откликов</td></tr>'}</tbody>
+            </table>
+        </div>
     `;
 }
 
-// EVENTS
-document.addEventListener("click", e => {
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
 
+document.addEventListener("click", async (e) => {
     if (e.target.id === "loginBtn") {
-        const l = login.value;
-        const p = pass.value;
-
+        const loginInput = document.getElementById("login");
+        const passInput = document.getElementById("pass");
+        const errorSpan = document.getElementById("error");
+        const l = loginInput?.value;
+        const p = passInput?.value;
         let foundUser = null;
-
         for (const u of Object.values(USERS)) {
             if (u.login === l && u.pass === p) {
                 foundUser = u;
                 break;
             }
         }
-
         if (!foundUser) {
-            document.getElementById("error").textContent = "Неверный логин или пароль";
+            if (errorSpan) errorSpan.textContent = "Неверный логин или пароль";
             return;
         }
-
         currentUser = foundUser;
         render();
     }
-
     if (e.target.id === "logout") {
         currentUser = null;
         render();
     }
-
     if (e.target.id === "create") {
-        createOrder();
+        await createOrder();
     }
-
     if (e.target.dataset.del) {
-        deleteOrder(e.target.dataset.del);
+        if (confirm("Удалить заказ? Все отклики на него тоже исчезнут.")) {
+            await deleteOrder(e.target.dataset.del);
+        }
     }
-
     if (e.target.dataset.resp) {
-        addResponse(e.target.dataset.resp);
+        await addResponse(e.target.dataset.resp);
     }
-
     if (e.target.dataset.accept) {
-        acceptResponse(e.target.dataset.accept);
+        if (confirm("Принять отклик? Другие будут отклонены, заказ закроется.")) {
+            await acceptResponse(e.target.dataset.accept);
+        }
     }
-
 });
 
 render();
 </script>
-
 </body>
 </html>
